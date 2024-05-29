@@ -17,7 +17,7 @@ def import_file():
     nama_file = os.path.basename(file_path)
     label_file.config(text=nama_file)
     if file_path:
-        with open(file_path, 'r') as file:
+        with open(file_path, 'r', encoding='utf-8') as file:
             global dialog
             global current
             dialog = []
@@ -30,7 +30,7 @@ def export_file():
     if not os.path.exists("dump"):
         os.mkdir("dump")     
    
-    with open("dump/"+nama_file, "w") as file:
+    with open("dump/"+nama_file, "w", encoding='utf-8') as file:
         for line in dialog:
             line = line.replace("\n", "\\n")
             file.write(line[:-2]+"\n")
