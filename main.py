@@ -1,13 +1,21 @@
 import sys
 import os
 import subprocess
+import shutil
 import logging
-from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QFileDialog, QTextEdit, QLabel, QVBoxLayout, QWidget, QMessageBox, QPushButton
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QAction, QFileDialog, QTextEdit, 
+                             QLabel, QVBoxLayout, QWidget, QMessageBox, QPushButton, 
+                             QListWidget, QDialog)
 from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt
 
 # Setup logging
 logging.basicConfig(filename='vntextpatch_gui.log', level=logging.DEBUG, 
                     format='%(asctime)s:%(levelname)s:%(message)s')
+
+class CommandExecutor:
+    def __init__(self):
+        pass
 
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
@@ -17,15 +25,142 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+class FileSelectorDialog(QDialog):
+    def __init__(self, parent=None):
+        super(FileSelectorDialog, self).__init__(parent)
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle('Dumper')
+        self.setGeometry(100, 100, 600, 400)
+        self.setWindowIcon(QIcon('VN_Editor/Icon1.ico'))
+
+        self.layout = QVBoxLayout(self)
+
+        self.file_list = QListWidget()
+        self.layout.addWidget(self.file_list)
+        
+        self.open_source_folder_button = QPushButton('Pilih Folder Sumber', self)
+        self.open_source_folder_button.clicked.connect(self.browse_source_folder)
+        self.layout.addWidget(self.open_source_folder_button)
+
+        self.decompile_all_button = QPushButton('Decompile all File', self)
+        self.decompile_all_button.clicked.connect(self.decompile_all_files)
+        self.layout.addWidget(self.decompile_all_button)
+        
+        self.run_button = QPushButton('Decompile File Yang Dipilih', self)
+        self.run_button.clicked.connect(self.run_command_on_selected_file)
+        self.layout.addWidget(self.run_button)
+
+    def browse_source_folder(self):
+        try:
+            options = QFileDialog.Options()
+            folder_name = QFileDialog.getExistingDirectory(self, "Cari Folder windata", options=options)
+            if folder_name:
+                self.folder_path = folder_name
+                self.load_files(folder_name)
+                logging.info(f'Source folder selected: {folder_name}')
+                QMessageBox.information(self, 'Folder Selected', f'Source folder selected: {folder_name}')
+        except Exception as e:
+            logging.error(f'Failed to open source folder: {str(e)}')
+            QMessageBox.critical(self, 'Error', f'Gagal membuka Pilih Folder SCN: {str(e)}')
+    
+    def load_files(self, folder_path):
+        try:
+            files = os.listdir(folder_path)
+            self.file_list.clear()
+            for file in files:
+                if file.endswith('.psb.m') and os.path.isfile(os.path.join(folder_path, file)):
+                    self.file_list.addItem(file)
+            logging.info(f'Files loaded from {folder_path}')
+        except Exception as e:
+            logging.error(f'Failed to load files: {str(e)}')
+            QMessageBox.critical(self, 'Error', f'Gagal memuat file: {str(e)}')   
+
+    def decompile_all_files(self):
+        for i in range(self.file_list.count()):
+            psbdecompile_path = resource_path('FreeMote/psbdecompile.exe')
+            key = '38757621acf82'
+            item = self.file_list.item(i)
+            file_name = item.text()
+            file_path = os.path.join(self.folder_path, file_name)
+            command = f'{psbdecompile_path} info-psb -k {key} "{file_path}"'
+            subprocess.run(command, shell=True, check=True)
+            self.post_decompile_steps(file_path)
+        QMessageBox.information(self, 'Success', 'All files decompiled successfully')
+        logging.info('All files decompiled successfully')
+
+    def run_command_on_selected_file(self):
+        selected_item = self.file_list.currentItem()
+        if selected_item:
+            file_name = selected_item.text()
+            file_path = os.path.join(self.folder_path, file_name)
+            self.execute_command(file_path)
+        else:
+            QMessageBox.warning(self, 'Warning', 'Tidak ada file yang dipilih')
+
+    def execute_command(self, file_path):
+        try:
+            psbdecompile_path = resource_path('FreeMote/psbdecompile.exe')
+            command = f'{psbdecompile_path} info-psb -k 38757621acf82 "{file_path}"'
+            logging.info(f'Executing command: {command}')
+            subprocess.run(command, shell=True)
+            QMessageBox.information(self, 'Success', f'Command executed successfully on {file_path}')
+            logging.info(f'Command executed successfully on {file_path}')
+            self.post_decompile_steps(file_path)
+        except Exception as e:
+            logging.error(f'Error executing command on {file_path}: {e}')
+            QMessageBox.critical(self, 'Error', f'Failed to execute command on {file_path}')
+
+    def post_decompile_steps(self, file_path):
+        try:
+            dump_folder = os.path.join(os.path.dirname(file_path), 'dump')
+            os.makedirs(dump_folder, exist_ok=True)
+            logging.info(f'Dump folder created at {dump_folder}')
+
+            folders_to_check = ['Config', 'Scenario', 'Motion', 'Sound', 'Voice', 'Image', 'Font', 'Script', 'Patch']
+            for folder in folders_to_check:
+                src_folder = os.path.join(os.path.dirname(file_path), folder)
+                if os.path.isdir(src_folder):
+                    shutil.move(src_folder, os.path.join(dump_folder, folder))
+                    logging.info(f'{folder} folder moved to {dump_folder}')
+
+            for folder in folders_to_check:
+                bat_file = os.path.join(dump_folder, folder, 'remove_m.bat')
+                if os.path.isdir(os.path.join(dump_folder, folder)):
+                    with open(bat_file, 'w') as bat:
+                        bat.write('ren *.m *.')
+                    logging.info(f'.bat file created at {bat_file}')
+
+            json_files = [f for f in os.listdir(os.path.dirname(file_path)) if f.endswith('.json')]
+            for json_file in json_files:
+                shutil.move(os.path.join(os.path.dirname(file_path), json_file), dump_folder)
+                logging.info(f'{json_file} file moved to {dump_folder}')
+
+            for folder in folders_to_check:
+                bat_file = os.path.join(dump_folder, folder, 'remove_m.bat')
+                if os.path.isdir(os.path.join(dump_folder, folder)):
+                    with open(bat_file, 'w') as bat:
+                        bat.write('ren *.m *.')
+                    logging.info(f'.bat file created at {bat_file}')
+        except Exception as e:
+            logging.error(f'Error during post decompile steps: {e}')
+            QMessageBox.critical(self, 'Error', 'Failed during post decompile steps')
+            
+            # Run the .bat file
+            #subprocess.run([bat_file_config], shell=True)
+            #logging.info(f'.bat file executed at {bat_file_config}')
+            #QMessageBox.information(self, 'Success', f'.bat file executed successfully')
+
 class VNTextPatchGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.initUI()
         
     def initUI(self):
-        self.setWindowTitle('VNTextPatch GUI')
-        self.setGeometry(100, 100, 600, 400)
-        self.setWindowIcon(QIcon('Icon1.ico'))
+        self.setWindowTitle('Plamemo CORE')
+        self.setGeometry(100, 100, 960, 544)
+        self.setWindowIcon(QIcon('VN_Editor/Icon1.ico'))
 
         # Menyiapkan widget utama
         self.central_widget = QWidget()
@@ -42,6 +177,7 @@ class VNTextPatchGUI(QMainWindow):
         self.log_area = QTextEdit()
         self.log_area.setFont(QFont('Courier', 10))
         self.log_area.setReadOnly(True)
+        self.log_area.setStyleSheet("background-color: black; color: white;")
         self.layout.addWidget(self.log_area)
         
         # Tombol Jalankan VNTextPatch
@@ -58,7 +194,7 @@ class VNTextPatchGUI(QMainWindow):
         menubar = self.menuBar()
 
         # Menu File
-        file_menu = menubar.addMenu('File')
+        file_menu = menubar.addMenu('Ekspor File SCN')
 
         # Menu Ekspor
         export_action = QAction('Pilih Folder SCN', self)
@@ -74,6 +210,16 @@ class VNTextPatchGUI(QMainWindow):
         import_action = QAction('Ubah Kembali Ke SCN', self)
         import_action.triggered.connect(self.import_from_dump)
         file_menu.addAction(import_action)
+
+        # Menu File Selector
+        file_menu = menubar.addMenu('Decompile')
+        file_selector_action = QAction('Dumper Plamemo', self)
+        file_selector_action.triggered.connect(self.open_file_selector)
+        file_menu.addAction(file_selector_action)
+        
+    def open_file_selector(self):
+        self.file_selector_dialog = FileSelectorDialog(self)
+        self.file_selector_dialog.exec_()
         
     def browse_source_folder(self):
         try:
